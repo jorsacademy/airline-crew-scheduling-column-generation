@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import Tuple
 
 
 @dataclass(frozen=True)
@@ -13,7 +12,7 @@ class Flight:
 
 @dataclass(frozen=True)
 class Pairing:
-    flight_ids: Tuple[int, ...]
+    flight_ids: tuple[int, ...]
     cost: float
 
 
