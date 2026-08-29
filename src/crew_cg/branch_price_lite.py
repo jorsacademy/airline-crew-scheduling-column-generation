@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import heapq
+from dataclasses import dataclass, field
 
 import numpy as np
 from scipy.optimize import linprog
