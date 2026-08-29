@@ -1,11 +1,11 @@
-from itertools import combinations
+from itertools import combinations, pairwise
 
 from .model import Pairing
 
 
 def is_legal(sequence, by_id, min_connection=30, max_duty=600):
     flights = [by_id[i] for i in sequence]
-    for a, b in zip(flights, flights[1:]):
+    for a, b in pairwise(flights):
         if a.destination != b.origin or b.departure - a.arrival < min_connection:
             return False
     return flights[-1].arrival - flights[0].departure <= max_duty
