@@ -1,0 +1,10 @@
+{
+  "base": "IST",
+  "min_connection_minutes": 30,
+  "max_duty_minutes": 600,
+  "max_legs_per_pairing": 4,
+  "reduced_cost_tolerance": 1e-8,
+  "max_iterations": 100,
+  "reference": "full pairing enumeration LP",
+  "next_stage": "replace exhaustive pricing with resource-constrained shortest-path label setting"
+}
