@@ -26,7 +26,7 @@ class ResourceLabel:
     last_arrival: int
     block_time: int
     sit_time: int
-    reduced_cost_without_open_penalty: float
+    reduced_cost: float
 
 
 def pairing_cost(flight_ids: tuple[int, ...], by_id: dict[int, Flight]) -> float:
@@ -41,6 +41,15 @@ def _reduced_cost(ids: tuple[int, ...], by_id: dict[int, Flight], duals) -> floa
     return pairing_cost(ids, by_id) - sum(float(duals[i]) for i in ids)
 
 
+def _same_future_state(a: ResourceLabel, b: ResourceLabel) -> bool:
+    return (
+        a.start_origin == b.start_origin
+        and a.start_departure == b.start_departure
+        and a.last_destination == b.last_destination
+        and a.last_arrival == b.last_arrival
+    )
+
+
 def price_pairing_resource_rcsp(
     flights: list[Flight],
     duals,
@@ -52,8 +61,8 @@ def price_pairing_resource_rcsp(
     """Price a legal pairing with explicit duty, block, sit and base resources."""
     rules = rules or CrewRules()
     by_id = {flight.flight_id: flight for flight in flights}
-    ordered = sorted(flights, key=lambda f: (f.departure, f.flight_id))
-    excluded = {p.flight_ids for p in existing or []} | (forbidden or set())
+    ordered = sorted(flights, key=lambda flight: (flight.departure, flight.flight_id))
+    excluded = {pairing.flight_ids for pairing in existing or []} | (forbidden or set())
 
     labels_by_last: dict[int, list[ResourceLabel]] = {}
     all_labels: list[ResourceLabel] = []
@@ -106,12 +115,10 @@ def price_pairing_resource_rcsp(
                 )
                 bucket = labels_by_last.setdefault(nxt.flight_id, [])
                 dominated = any(
-                    incumbent.start_origin == candidate.start_origin
-                    and incumbent.last_destination == candidate.last_destination
+                    _same_future_state(incumbent, candidate)
                     and incumbent.block_time <= candidate.block_time
                     and incumbent.sit_time <= candidate.sit_time
-                    and incumbent.reduced_cost_without_open_penalty
-                    <= candidate.reduced_cost_without_open_penalty
+                    and incumbent.reduced_cost <= candidate.reduced_cost
                     for incumbent in bucket
                 )
                 if dominated:
@@ -120,12 +127,10 @@ def price_pairing_resource_rcsp(
                     incumbent
                     for incumbent in bucket
                     if not (
-                        incumbent.start_origin == candidate.start_origin
-                        and incumbent.last_destination == candidate.last_destination
+                        _same_future_state(incumbent, candidate)
                         and candidate.block_time <= incumbent.block_time
                         and candidate.sit_time <= incumbent.sit_time
-                        and candidate.reduced_cost_without_open_penalty
-                        <= incumbent.reduced_cost_without_open_penalty
+                        and candidate.reduced_cost <= incumbent.reduced_cost
                     )
                 ]
                 bucket.append(candidate)
@@ -138,8 +143,7 @@ def price_pairing_resource_rcsp(
             continue
         if rules.require_base_return and label.last_destination != rules.base:
             continue
-        reduced = label.reduced_cost_without_open_penalty
-        if reduced < best:
-            best = reduced
+        if label.reduced_cost < best:
+            best = label.reduced_cost
             best_pairing = Pairing(label.flight_ids, pairing_cost(label.flight_ids, by_id))
     return best, best_pairing
