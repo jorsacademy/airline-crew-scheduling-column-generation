@@ -1,124 +1,147 @@
 # Airline Crew Scheduling with Column Generation
 
-Research-oriented Operations Research implementation of a crew-pairing style set-covering model solved with **Dantzig-Wolfe column generation**.
+Research-oriented Operations Research benchmark for crew-pairing style set covering with **Dantzig-Wolfe column generation, resource-constrained pricing and integer recovery**.
 
 ## Research question
 
-Can a restricted master problem plus resource-constrained shortest-path pricing recover the full LP relaxation without enumerating the combinatorial pairing space, and how large is the integer recovery gap after column generation terminates?
+How far can decomposition scale before pairing enumeration becomes impractical, and when does node-wise pricing materially improve integer recovery beyond a root restricted master?
 
 ## Current status
 
-**Phase 3 implemented: RCSP column generation + integer restricted-master recovery.**
+**Feature-complete research benchmark.**
 
-The repository contains:
+The repository implements:
 
 - flight and pairing data structures;
-- legal-duty checks and exhaustive pairing generation for transparent reference cases;
-- a restricted master LP solved with HiGHS through SciPy;
-- explicit dual-price extraction;
-- exhaustive reduced-cost pricing for correctness checks;
-- an acyclic label-setting pricing algorithm for the connection network;
-- an RCSP-driven column-generation loop;
-- a deterministic hub-and-spoke timetable generator;
-- a binary restricted-master MILP solved after LP column generation;
-- integrality-gap reporting;
-- tests proving pricing and LP correctness on reference instances;
-- CI across supported Python versions.
+- exhaustive legal-pairing enumeration for transparent reference instances;
+- restricted master LP solved with HiGHS through SciPy;
+- explicit coverage-dual extraction;
+- exhaustive reduced-cost pricing as an oracle;
+- acyclic label-setting RCSP pricing;
+- resource-rich labels with duty, block and sit-time state;
+- optional crew-base return legality;
+- deterministic hub-and-spoke timetable generation;
+- binary restricted-master recovery and integrality-gap reporting;
+- column-variable **branch-and-price-lite** with fresh pricing at every branch node;
+- frozen scaling configuration, tests, final report and CI across Python 3.10–3.12.
 
-## LP master formulation
+## Master formulation
 
-For pairing set `P` and flights `F`, the LP relaxation is
-
-```text
-min  sum(c_p x_p)                p in P
-s.t. sum(a_fp x_p) >= 1          f in F
-     x_p >= 0
-```
-
-Coverage duals `pi_f` define pairing reduced cost
+For legal pairing set `P` and flights `F`:
 
 ```text
-c_bar_p = c_p - sum(pi_f : f in p).
+min  sum(c_p x_p)                 p in P
+s.t. sum(a_fp x_p) >= 1           f in F
+     x_p in {0,1}
 ```
 
-A negative-reduced-cost legal pairing is added as a new column. The process terminates only when RCSP pricing cannot find an improving column within tolerance.
-
-## Integer recovery
-
-After column generation converges, the generated pairing set is frozen and a binary set-covering master is solved:
+Column generation solves the LP relaxation over a restricted subset of pairings. Coverage duals `pi_f` define reduced cost
 
 ```text
-x_p in {0, 1}
+c_bar_p = c_p - sum(pi_f a_fp).
 ```
 
-The experiment reports the LP lower bound, integer restricted-master objective and relative integrality gap. This is **not labeled as full branch-and-price**: branching does not yet trigger new pricing subproblems. The distinction is intentional.
+Pricing adds a negative-reduced-cost legal pairing until no improving column remains within tolerance.
 
-## Pricing problem
+## Resource-constrained pricing
 
-Flights form a directed acyclic connection network because feasible connections move forward in time. Labels store the current duty path, first departure, last arrival, location and accumulated reduced cost. Extensions enforce airport continuity, minimum connection time, maximum duty duration and maximum legs. Exhaustive pricing remains as an oracle on small instances.
+The final RCSP state tracks:
 
-## Quick start
+- starting origin/base and departure time;
+- current airport and arrival time;
+- cumulative block time;
+- cumulative sit time;
+- duty elapsed time;
+- number of legs;
+- reduced cost.
+
+The pricing rules support minimum connection, maximum sit, maximum duty, maximum block, maximum legs and optional return to the configured crew base. Dominance is only applied when the compared labels share the same future-relevant boundary state.
+
+## Integer recovery and branch-and-price-lite
+
+Two integer layers are deliberately reported separately.
+
+**Restricted integer master:** after root LP column generation terminates, the generated columns are frozen and solved as a binary set-covering MILP.
+
+**Branch-and-price-lite:** if a generated pairing variable is fractional, the tree branches on `x_p = 0` versus `x_p = 1`. The zero child forbids that pairing from subsequent pricing. The one child fixes its cost and coverage contribution and solves the residual cover. Column generation is rerun at every node, producing node-specific LP bounds.
+
+This is a real node-wise pricing implementation, but it is intentionally not presented as an airline-production branch-and-price solver. Ryan–Foster branching, multi-day legality, deadheading and stabilization remain outside the frozen scope.
+
+## Reproducible benchmark
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev]'
+ruff check src tests
 pytest -q
 python -m crew_cg.experiment
+python -m crew_cg.final_benchmark
 ```
 
-The experiment checks:
+`configs/final_benchmark.json` freezes crew-resource limits, reduced-cost tolerance, branch-node budget and scaling sizes.
 
-1. full enumeration, exhaustive-pricing CG and RCSP-pricing CG reach the same toy LP objective;
-2. label-setting pricing agrees with exhaustive pricing on tractable reference cases;
-3. the integer restricted master covers every flight;
-4. LP and integer objectives are reported together;
-5. the larger synthetic hub case runs without constructing the full pairing set.
+The final benchmark reports:
+
+- flights;
+- generated columns;
+- column-generation iterations;
+- LP lower bound;
+- restricted integer objective;
+- integrality gap;
+- branch-and-price-lite objective;
+- branch nodes and pricing iterations;
+- CG, MILP recovery and branch-and-price runtimes.
 
 ## Repository map
 
 ```text
 src/crew_cg/
-  model.py                   # flight and pairing structures
-  generator.py               # synthetic hub timetable
-  pairing.py                 # exhaustive reference pricing
-  master.py                  # restricted master LP and duals
-  pricing_rcsp.py            # label-setting RCSP pricing
-  column_generation.py       # exhaustive-pricing reference CG
-  column_generation_rcsp.py  # scalable pricing loop
-  integer_master.py          # binary recovery + integrality gap
-  experiment.py              # correctness and scaling benchmark
+  model.py
+  generator.py
+  pairing.py
+  master.py
+  pricing_rcsp.py
+  column_generation.py
+  column_generation_rcsp.py
+  resource_pricing.py
+  resource_column_generation.py
+  integer_master.py
+  branch_price_lite.py
+  experiment.py
+  final_benchmark.py
 tests/
   test_column_generation.py
   test_rcsp_pricing.py
   test_integer_master.py
+  test_completion.py
 configs/
   experiment.json
+  final_benchmark.json
+docs/
+  final_report.md
 .github/workflows/
   ci.yml
 ```
 
-## Scientific validation contract
+## Validation contract
 
-A result is accepted only if coverage remains feasible, dual signs are correct, RCSP pricing agrees with exhaustive pricing wherever tractable, termination occurs only without negative reduced cost, LP objectives agree with full enumeration on references, and integer recovery is reported separately from the LP bound.
+A result is accepted only if:
 
-## Next research stages
+1. every flight is covered;
+2. reduced-cost dual signs are correct;
+3. RCSP pricing agrees with exhaustive pricing where enumeration is tractable;
+4. resource-rich pairings satisfy configured legality rules;
+5. column generation terminates only without a negative-reduced-cost column;
+6. the toy branch-and-price-lite result matches the full enumerated integer optimum;
+7. LP, restricted-integer and branch-and-price results are reported separately;
+8. column counts, iteration counts, node counts and runtimes are retained.
 
-### Phase 4 — richer crew resources
-Add maximum block time, maximum sit time, explicit crew base return, overnight state and duty/resource counters directly to labels.
+See `docs/final_report.md` for the complete methodological contract and scope boundary.
 
-### Phase 5 — realistic scaling
-Benchmark flights, generated columns, master iterations, pricing time, master time, MILP recovery time and memory.
+## Scope boundary
 
-### Phase 6 — true branch-and-price-lite
-Introduce branching decisions that preserve pricing structure and re-run pricing at branch nodes. Until then, the repository deliberately uses the term **integer restricted master**, not branch-and-price.
-
-### Phase 7 — stabilization
-Investigate dual stabilization and column management for larger instances.
-
-## Portfolio signal
-
-The repository exposes the decomposition algorithm itself: master formulation, dual information, reduced-cost pricing, label dominance, convergence tests and integer recovery rather than merely calling a monolithic solver.
+This repository is complete as a compact decomposition benchmark. Multi-day pairing, rest/hotel rules, qualifications, deadheading, Ryan–Foster branching, dual stabilization and industrial airline datasets should be separate research extensions rather than hidden changes to this benchmark.
 
 ## License
 
