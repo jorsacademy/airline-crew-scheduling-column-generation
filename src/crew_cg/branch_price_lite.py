@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import heapq
 
 import numpy as np
@@ -14,9 +14,10 @@ from .resource_pricing import CrewRules, price_pairing_resource_rcsp
 @dataclass(order=True)
 class Node:
     bound: float
-    depth: int
-    fixed: tuple[Pairing, ...]
-    forbidden: frozenset[tuple[int, ...]]
+    serial: int
+    depth: int = field(compare=False)
+    fixed: tuple[Pairing, ...] = field(compare=False)
+    forbidden: frozenset[tuple[int, ...]] = field(compare=False)
 
 
 def _coverage_matrix(flights, pairings):
@@ -41,7 +42,7 @@ def _solve_residual_master(flights, pairings, fixed):
         raise RuntimeError("residual master has no columns")
     coverage = _coverage_matrix(flights, pairings)
     result = linprog(
-        np.asarray([p.cost for p in pairings]),
+        np.asarray([pairing.cost for pairing in pairings]),
         A_ub=-coverage,
         b_ub=-rhs,
         bounds=[(0.0, None)] * len(pairings),
@@ -57,11 +58,11 @@ def _solve_residual_master(flights, pairings, fixed):
 
 
 def _price_node(flights, rules, fixed, forbidden, tolerance, max_iterations):
-    fixed_keys = {p.flight_ids for p in fixed}
+    fixed_keys = {pairing.flight_ids for pairing in fixed}
     active = [
-        p
-        for p in _singleton_pairings(flights, rules)
-        if p.flight_ids not in forbidden and p.flight_ids not in fixed_keys
+        pairing
+        for pairing in _singleton_pairings(flights, rules)
+        if pairing.flight_ids not in forbidden and pairing.flight_ids not in fixed_keys
     ]
     history = []
     for iteration in range(max_iterations):
@@ -90,15 +91,15 @@ def branch_and_price_lite(
 ):
     """Best-bound column-variable branching with fresh pricing at every node.
 
-    This is deliberately a compact branch-and-price implementation. It branches on
-    fractional generated pairing variables. The x=0 child forbids that pairing from
-    future pricing; the x=1 child fixes the pairing and reduces residual coverage.
+    The x=0 child forbids the selected pairing from future pricing. The x=1 child
+    fixes its cost and coverage contribution. Both children rerun column generation.
     """
     rules = rules or CrewRules(require_base_return=False)
     root_master, root_columns, root_history = _price_node(
         flights, rules, (), frozenset(), tolerance, max_iterations
     )
-    queue = [Node(root_master["objective"], 0, (), frozenset())]
+    serial = 0
+    queue = [Node(root_master["objective"], serial, 0, (), frozenset())]
     incumbent_cost = float("inf")
     incumbent: tuple[Pairing, ...] = ()
     explored = 0
@@ -125,7 +126,7 @@ def branch_and_price_lite(
             continue
         x = master["x"]
         fractional = [
-            (abs(value - 0.5), index, value)
+            (abs(value - 0.5), index)
             for index, value in enumerate(x)
             if tolerance < value < 1.0 - tolerance
         ]
@@ -137,14 +138,20 @@ def branch_and_price_lite(
             incumbent = selected
             continue
 
-        _, index, _ = min(fractional)
+        _, index = min(fractional)
         branch_pairing = columns[index]
         forbid = frozenset(set(node.forbidden) | {branch_pairing.flight_ids})
-        heapq.heappush(queue, Node(master["objective"], node.depth + 1, node.fixed, forbid))
+        serial += 1
+        heapq.heappush(
+            queue,
+            Node(master["objective"], serial, node.depth + 1, node.fixed, forbid),
+        )
+        serial += 1
         heapq.heappush(
             queue,
             Node(
                 master["objective"],
+                serial,
                 node.depth + 1,
                 tuple(node.fixed) + (branch_pairing,),
                 node.forbidden,
